@@ -1,0 +1,41 @@
+services:
+
+
+  api:
+    build:
+      context: .
+      dockerfile: dev.Dockerfile
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432 
+      DB_NAME: dbname 
+      DB_USER: postgres
+      DB_PASS: password
+      API_PORT: 8080
+      API_ADDR: api   
+    ports:
+      - "8080:8080"
+    # volumes:
+    #   - ./:/code/app
+    depends_on:
+      db:
+        condition: service_healthy
+
+
+  db:
+    image: postgres
+    # set shared memory limit when using docker-compose
+    shm_size: 128mb
+    ports:
+    - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: dbname
+    volumes:
+      - ./database:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+

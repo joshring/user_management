@@ -1,0 +1,1333 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>apiroutes: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">api_example/internal/apiroutes/apiroutes.go (0.0%)</option>
+				
+				<option value="file1">api_example/internal/apiroutes/middleware.go (0.0%)</option>
+				
+				<option value="file2">api_example/internal/apiutil/apiutil.go (0.0%)</option>
+				
+				<option value="file3">api_example/internal/database/database.go (0.0%)</option>
+				
+				<option value="file4">api_example/internal/server/server.go (0.0%)</option>
+				
+				<option value="file5">api_example/internal/testutil/database.go (0.0%)</option>
+				
+				<option value="file6">api_example/internal/testutil/response.go (0.0%)</option>
+				
+				<option value="file7">api_example/internal/testutil/server.go (0.0%)</option>
+				
+				<option value="file8">api_example/internal/testutil/time.go (0.0%)</option>
+				
+				<option value="file9">api_example/internal/user/user.go (70.8%)</option>
+				
+				<option value="file10">api_example/main.go (0.0%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package apiroutes
+
+import (
+        "api_example/internal/user"
+        "net/http"
+        "time"
+
+        "github.com/jackc/pgx/v5"
+)
+
+// Route handler dependencies are function arguments,
+// each route handler returns a http.HandleFunc
+// We do this so we know what each route's dependencies are
+func AddApiRoutes(
+        mux *http.ServeMux,
+        dbConn *pgx.Conn,
+        timeFunc func() time.Time,
+) *http.ServeMux <span class="cov0" title="0">{
+
+        mux.HandleFunc(
+                "POST /login",
+                addMiddleware(
+                        user.PostLogin(dbConn, timeFunc),
+                        stdMiddleware,
+                ),
+        )
+
+        mux.HandleFunc(
+                "POST /user",
+                panicHandler(
+                        // Not logging request body here, as would would leak user passwords into the logs
+                        logRequestNoBody(
+                                user.PostUser(dbConn, timeFunc),
+                        ),
+                ),
+        )
+
+        mux.HandleFunc(
+                "GET /user",
+                authMiddleware(dbConn, timeFunc)(
+                        addMiddleware(
+                                user.GetUser(dbConn),
+                                stdMiddleware,
+                        ),
+                ),
+        )
+
+        return mux
+}</span>
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package apiroutes
+
+import (
+        "api_example/internal/apiutil"
+        "api_example/internal/database"
+        "bytes"
+        "context"
+        "io"
+        "log"
+        "net/http"
+        "runtime"
+        "time"
+
+        "github.com/jackc/pgx/v5"
+)
+
+// stdMiddleware is middleware you always need
+var stdMiddleware = []func(http.HandlerFunc) http.HandlerFunc{
+        panicHandler,
+        logRequest,
+}
+
+// addMiddleware Wrap a function in a slice of middleware functions
+func addMiddleware(
+        handler http.HandlerFunc,
+        middlewareSlice []func(http.HandlerFunc) http.HandlerFunc,
+) http.HandlerFunc <span class="cov0" title="0">{
+
+        for _, middleware := range middlewareSlice </span><span class="cov0" title="0">{
+                handler = middleware(handler)
+        }</span>
+        <span class="cov0" title="0">return handler</span>
+}
+
+// authMiddleware handles authorisation checks the sessionPublicID and csrf_token are valid
+// those are given to the client after POST /login
+//
+// dependency inject dbConn and timeFunc, then return regular middleware function
+func authMiddleware(
+        dbConn *pgx.Conn,
+        timeFunc func() time.Time,
+) func(next http.HandlerFunc) http.HandlerFunc <span class="cov0" title="0">{
+
+        // Return regular middleware function
+        return func(next http.HandlerFunc) http.HandlerFunc </span><span class="cov0" title="0">{
+                return func(w http.ResponseWriter, r *http.Request) </span><span class="cov0" title="0">{
+
+                        //=====================================
+                        // Get csrfToken from csrf_token header
+
+                        csrfToken := r.Header.Get("csrf_token")
+                        if csrfToken == "" </span><span class="cov0" title="0">{
+                                log.Printf("no csrf_token header provided\n")
+                                w.WriteHeader(http.StatusUnauthorized)
+                                return
+                        }</span>
+
+                        //=====================================
+                        // Get session cookie if present, else unauthorized
+
+                        <span class="cov0" title="0">if len(r.Cookies()) == 0 </span><span class="cov0" title="0">{
+                                log.Printf("no cookies provided, expected \"session\" cookie\n")
+                                w.WriteHeader(http.StatusUnauthorized)
+                                return
+                        }</span>
+
+                        <span class="cov0" title="0">cookie := &amp;http.Cookie{}
+
+                        for _, cookieItem := range r.Cookies() </span><span class="cov0" title="0">{
+                                if cookieItem.Name == "session" </span><span class="cov0" title="0">{
+                                        cookie = cookieItem
+                                }</span>
+                        }
+                        <span class="cov0" title="0">if cookie == nil </span><span class="cov0" title="0">{
+                                log.Printf("expected \"session\" cookie not found\n")
+                                w.WriteHeader(http.StatusUnauthorized)
+                                return
+                        }</span>
+
+                        <span class="cov0" title="0">sessionPublicID := cookie.Value
+
+                        //=====================================
+                        // Find userID matching sessionPublicID and csrf_token where the session not expired
+
+                        ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+                        defer cancel()
+
+                        var userID int
+
+                        err := database.StartTransaction(dbConn, ctx, func(tx pgx.Tx) error </span><span class="cov0" title="0">{
+
+                                row := tx.QueryRow(
+                                        ctx,
+                                        `select
+                                                "user"."id"
+                                        from "session"
+                                        join "user" on "user"."id" = "session"."user_id"
+                                        where
+                                                "session"."expires_at" &gt;= $1
+                                                and "session"."csrf_token" = $2
+                                                and "session"."public_id" = $3;
+                                `,
+                                        timeFunc(),
+                                        csrfToken,
+                                        sessionPublicID,
+                                )
+
+                                err := row.Scan(
+                                        &amp;userID,
+                                )
+                                if err != nil </span><span class="cov0" title="0">{
+                                        return err
+                                }</span>
+
+                                <span class="cov0" title="0">return nil</span>
+                        })
+                        <span class="cov0" title="0">if err != nil </span><span class="cov0" title="0">{
+                                log.Printf("error in authMiddleware: %s\n", err.Error())
+                                w.WriteHeader(http.StatusUnauthorized)
+                                return
+                        }</span>
+
+                        //=====================================
+                        // Add requesting user's userID into the request context
+                        // This can be used by API endpoints and other middleware etc
+                        <span class="cov0" title="0">r = r.WithContext(
+                                context.WithValue(
+                                        r.Context(),
+                                        apiutil.UserIDCtxKey,
+                                        userID,
+                                ),
+                        )
+
+                        next(w, r)</span>
+                }
+        }
+}
+
+// logRequest logs the request method, URI and body, then restores the body (if provided)
+//
+// Used where no sensitive information is contained in the request body, for that use: logRequestNoBody
+func logRequest(next http.HandlerFunc) http.HandlerFunc <span class="cov0" title="0">{
+
+        return func(w http.ResponseWriter, r *http.Request) </span><span class="cov0" title="0">{
+
+                defer r.Body.Close()
+                bodyBytes, err := io.ReadAll(r.Body)
+                if err != nil </span><span class="cov0" title="0">{
+                        log.Printf("logRequest err: %s\n", err.Error())
+                        return
+                }</span>
+
+                <span class="cov0" title="0">if len(bodyBytes) &gt; 0 </span><span class="cov0" title="0">{
+                        // Replace the body back into the request so it can be opened in the handler
+                        r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+                        log.Printf("%s %s body:\n%s\n", r.Method, r.URL, string(bodyBytes))
+                }</span> else<span class="cov0" title="0"> {
+                        log.Printf("%s %s\n", r.Method, r.URL)
+                }</span>
+                <span class="cov0" title="0">next(w, r)</span>
+        }
+}
+
+// logRequestNoBody logs the request method, URI
+//
+// Used with sensitive information in the request body, and we do not wish that to go into the logs
+func logRequestNoBody(next http.HandlerFunc) http.HandlerFunc <span class="cov0" title="0">{
+
+        return func(w http.ResponseWriter, r *http.Request) </span><span class="cov0" title="0">{
+
+                log.Printf("%s %s\n", r.Method, r.URL)
+                next(w, r)
+        }</span>
+}
+
+// panicHandler recover from panic to avoid an API crash, log stacktrace and return 500
+func panicHandler(next http.HandlerFunc) http.HandlerFunc <span class="cov0" title="0">{
+
+        return func(w http.ResponseWriter, r *http.Request) </span><span class="cov0" title="0">{
+
+                defer func() </span><span class="cov0" title="0">{
+
+                        recErr := recover()
+                        if recErr != nil </span><span class="cov0" title="0">{
+                                log.Printf("panic error: %v stack: %v\n", recErr, runtime.StartTrace())
+                                http.Error(w, "internal server error", http.StatusInternalServerError)
+                                return
+                        }</span>
+                }()
+
+                <span class="cov0" title="0">next(w, r)</span>
+
+        }
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">package apiutil
+
+import (
+        "errors"
+        "fmt"
+        "log"
+        "net/http"
+        "os"
+)
+
+var FailedToGetUserIDFromCtx = errors.New("failed to retrieve userID from the request ctx")
+
+// UserIDCtxKey is the context key used to retrieve userID from request context
+var UserIDCtxKey struct{}
+
+// GetUserIDFromReq gets userID which was saved into the request context with
+func GetUserIDFromReq(r *http.Request) (int, error) <span class="cov0" title="0">{
+
+        userIDAny := r.Context().Value(UserIDCtxKey)
+        userID, ok := userIDAny.(int)
+        if !ok </span><span class="cov0" title="0">{
+                // Not leaking internal error details to the client
+                log.Printf("failed to retrieve userID from the request ctx, did you forget to use the authMiddleware middleware?")
+                return 0, FailedToGetUserIDFromCtx
+        }</span>
+        <span class="cov0" title="0">return userID, nil</span>
+}
+
+// GetServerAddrPort get the server's address and port
+func GetServerAddrPort() (string, string) <span class="cov0" title="0">{
+
+        apiPort := os.Getenv("API_PORT")
+        if apiPort == "" </span><span class="cov0" title="0">{
+                apiPort = "8080"
+                // TODO: add env var to trigger this fatal error in prod so we can easily debug deployment
+                // log.Fatalf("API_PORT is undefined")
+        }</span>
+        <span class="cov0" title="0">apiAddress := os.Getenv("API_ADDR")
+        if apiAddress == "" </span><span class="cov0" title="0">{
+                apiAddress = "localhost"
+                // TODO: add env var to trigger this fatal error in prod so we can easily debug deployment
+                // log.Fatalf("API_ADDR is undefined")
+        }</span>
+
+        <span class="cov0" title="0">return apiAddress, apiPort</span>
+}
+
+// GetServerAddrPortForCookie get the server's address and port for cookie
+func GetServerAddrPortForCookie() string <span class="cov0" title="0">{
+
+        apiAddress, apiPort := GetServerAddrPort()
+        if apiAddress == "localhost" </span><span class="cov0" title="0">{
+                return apiAddress
+        }</span>
+        <span class="cov0" title="0">return fmt.Sprintf("%s:%s", apiAddress, apiPort)</span>
+}
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">package database
+
+import (
+        "context"
+        "fmt"
+        "log"
+        "os"
+        "time"
+
+        "github.com/jackc/pgx/v5"
+)
+
+// ConnectToDBWithEnvVars use environment variables
+//
+// Intended for deployment rather than integration tests
+func ConnectToDBWithEnvVars() *pgx.Conn <span class="cov0" title="0">{
+
+        dbEnvInput := GetDBEnv()
+
+        ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+        defer cancel()
+
+        dbConn, err := ConnectToDB(
+                dbEnvInput.DbUser,
+                dbEnvInput.DbPass,
+                dbEnvInput.DbHost,
+                dbEnvInput.DbPort,
+                dbEnvInput.DbName,
+                ctx,
+        )
+        if err != nil </span><span class="cov0" title="0">{
+                log.Fatalf("error connecting to database: %s", err.Error())
+        }</span>
+
+        <span class="cov0" title="0">return dbConn</span>
+
+}
+
+type DBEnv struct {
+        DbUser string
+        DbPass string
+        DbHost string
+        DbPort string
+        DbName string
+}
+
+// GetDBEnv get environment variables for database connection,
+//
+// Cannot proceed without, reports and exits program on error
+func GetDBEnv() DBEnv <span class="cov0" title="0">{
+
+        var dbEnv DBEnv
+
+        dbEnv.DbUser = os.Getenv("DB_USER")
+        if dbEnv.DbUser == "" </span><span class="cov0" title="0">{
+                log.Fatalf("DB_USER is not defined")
+        }</span>
+
+        <span class="cov0" title="0">dbEnv.DbPass = os.Getenv("DB_PASS")
+        if dbEnv.DbPass == "" </span><span class="cov0" title="0">{
+                log.Fatalf("DB_PASS is not defined")
+        }</span>
+
+        <span class="cov0" title="0">dbEnv.DbHost = os.Getenv("DB_HOST")
+        if dbEnv.DbHost == "" </span><span class="cov0" title="0">{
+                log.Fatalf("DB_HOST is not defined")
+        }</span>
+
+        <span class="cov0" title="0">dbEnv.DbPort = os.Getenv("DB_PORT")
+        if dbEnv.DbPort == "" </span><span class="cov0" title="0">{
+                log.Fatalf("DB_PORT is not defined")
+        }</span>
+
+        <span class="cov0" title="0">dbEnv.DbName = os.Getenv("DB_NAME")
+        if dbEnv.DbName == "" </span><span class="cov0" title="0">{
+                log.Fatalf("DB_NAME is not defined")
+        }</span>
+
+        <span class="cov0" title="0">return dbEnv</span>
+}
+
+// ConnectToDB connects to a postgres database and checks the connection via dbConn.Ping()
+func ConnectToDB(
+        user string,
+        password string,
+        host string,
+        port string,
+        dbName string,
+        context context.Context,
+) (*pgx.Conn, error) <span class="cov0" title="0">{
+
+        // postgresql://[user[:password]@][netloc][:port][/dbname]
+        dbString := fmt.Sprintf("postgresql://%s:%s@%s:%s/%s", user, password, host, port, dbName)
+
+        dbConn, err := pgx.Connect(context, dbString)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("Unable to connect to database: %v\n", err)
+        }</span>
+
+        <span class="cov0" title="0">err = dbConn.Ping(context)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("Unable to Ping the database: %v\n", err)
+        }</span>
+
+        <span class="cov0" title="0">return dbConn, nil</span>
+}
+
+// StartTransaction creates a database transaction for function input func(*sql.Tx) error
+// If it returns an error or panics transaction is rolled back
+//
+// Returns err from sqlFnClosure
+func StartTransaction(
+        dbConn *pgx.Conn,
+        context context.Context,
+        sqlFnClosure func(pgx.Tx) error,
+) error <span class="cov0" title="0">{
+
+        tx, err := dbConn.Begin(context)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        // Handle when we find an error or (panic) inside a transaction
+        <span class="cov0" title="0">defer func() </span><span class="cov0" title="0">{
+                panicErr := recover()
+
+                if panicErr != nil </span><span class="cov0" title="0">{
+                        // a panic occurred, rollback and re-panic
+                        tx.Rollback(context)
+                        panic(panicErr)</span>
+
+                } else<span class="cov0" title="0"> if err != nil </span><span class="cov0" title="0">{
+                        // something went wrong, rollback
+                        tx.Rollback(context)
+
+                }</span> else<span class="cov0" title="0"> {
+                        // all good, commit
+                        err = tx.Commit(context)
+                }</span>
+        }()
+
+        <span class="cov0" title="0">err = sqlFnClosure(tx)
+        return err</span>
+}
+</pre>
+		
+		<pre class="file" id="file4" style="display: none">package server
+
+import (
+        "api_example/internal/apiroutes"
+        "api_example/internal/apiutil"
+        "fmt"
+        "log"
+        "net/http"
+        "time"
+
+        "github.com/jackc/pgx/v5"
+)
+
+// StartServer is used in a deployment
+//
+// For server used in integration tests see: testutil.StartTestServer
+func StartServer(dbConn *pgx.Conn) <span class="cov0" title="0">{
+
+        apiAddress, apiPort := apiutil.GetServerAddrPort()
+
+        mux := InitServer(dbConn, time.Now)
+
+        server := &amp;http.Server{
+                Addr:    fmt.Sprintf("%s:%s", apiAddress, apiPort),
+                Handler: mux,
+        }
+
+        if apiAddress == "api" </span><span class="cov0" title="0">{
+                log.Printf("API inside docker: Listening on localhost:%s", apiPort)
+        }</span> else<span class="cov0" title="0"> {
+                log.Printf("Listening on %s:%s", apiAddress, apiPort)
+        }</span>
+
+        <span class="cov0" title="0">err := server.ListenAndServe()
+        if err != nil </span><span class="cov0" title="0">{
+                log.Fatalf("unable to start server: %s", err.Error())
+        }</span>
+}
+
+// InitServer starts router, adds API routes
+// Also used inside StartTestServer
+func InitServer(
+        dbConn *pgx.Conn,
+        timeFunc func() time.Time,
+) *http.ServeMux <span class="cov0" title="0">{
+
+        mux := http.NewServeMux()
+        mux = apiroutes.AddApiRoutes(mux, dbConn, timeFunc)
+        return mux
+}</span>
+</pre>
+		
+		<pre class="file" id="file5" style="display: none">package testutil
+
+import (
+        "api_example/internal/database"
+        "context"
+        "fmt"
+        "log"
+        "testing"
+        "time"
+
+        "github.com/jackc/pgx/v5"
+)
+
+// ConnectToDB this is specifically designed for local integration tests only
+func ConnectToDBForTest(t *testing.T) *pgx.Conn <span class="cov0" title="0">{
+
+        dbEnvInput := database.DBEnv{
+                DbUser: "postgres",
+                DbPass: "password",
+                DbHost: "localhost",
+                DbPort: "5432",
+                DbName: "dbname",
+        }
+
+        ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+        defer cancel()
+
+        dbConn, err := database.ConnectToDB(
+                dbEnvInput.DbUser,
+                dbEnvInput.DbPass,
+                dbEnvInput.DbHost,
+                dbEnvInput.DbPort,
+                dbEnvInput.DbName,
+                ctx,
+        )
+        if err != nil </span><span class="cov0" title="0">{
+                log.Fatalf("error connecting to database: %s", err.Error())
+        }</span>
+
+        <span class="cov0" title="0">tablesList := []string{
+                "session",
+                "user",
+        }
+
+        // Empty tables prior to running the test
+        for _, tableName := range tablesList </span><span class="cov0" title="0">{
+
+                tableNameIdent := pgx.Identifier{tableName}
+
+                _, err := dbConn.Exec(ctx, fmt.Sprintf("truncate %s cascade;", tableNameIdent.Sanitize()))
+                if err != nil </span><span class="cov0" title="0">{
+                        log.Fatal(err)
+                }</span>
+        }
+
+        <span class="cov0" title="0">t.Cleanup(
+                func() </span><span class="cov0" title="0">{
+                        dbConn.Close(ctx)
+                }</span>,
+        )
+
+        <span class="cov0" title="0">return dbConn</span>
+
+}
+</pre>
+		
+		<pre class="file" id="file6" style="display: none">package testutil
+
+import (
+        "encoding/json"
+        "io"
+        "net/http"
+        "testing"
+
+        "github.com/stretchr/testify/require"
+)
+
+// API error response
+type errResponse struct {
+        Error string `json:"error"`
+}
+
+// CheckErr asserts the returned status code and error is as expected
+func CheckErr(
+        t *testing.T,
+        response *http.Response,
+        expectedStatusCode int,
+        expectedErrStr string,
+) <span class="cov0" title="0">{
+        require := require.New(t)
+
+        require.Equal(expectedStatusCode, response.StatusCode)
+
+        responseBytes, err := io.ReadAll(response.Body)
+        require.Nil(err)
+
+        var responseFound errResponse
+
+        err = json.Unmarshal(responseBytes, &amp;responseFound)
+        require.Nil(err)
+
+        expectedRespErr := errResponse{Error: expectedErrStr}
+        require.Equal(expectedRespErr, responseFound)
+
+}</span>
+
+// CheckValue asserts the returned status code and value is as expected, generic over the expectedValue's type
+func CheckValue[T any](
+        t *testing.T,
+        response *http.Response,
+        expectedStatusCode int,
+        expectedValue T,
+) <span class="cov0" title="0">{
+        require := require.New(t)
+
+        require.Equal(expectedStatusCode, response.StatusCode)
+
+        responseBytes, err := io.ReadAll(response.Body)
+        require.Nil(err)
+
+        var responseFound T
+
+        err = json.Unmarshal(responseBytes, &amp;responseFound)
+        require.Nil(err)
+
+        require.Equal(expectedValue, responseFound)
+
+}</span>
+</pre>
+		
+		<pre class="file" id="file7" style="display: none">package testutil
+
+import (
+        "api_example/internal/server"
+        "net/http/httptest"
+        "testing"
+        "time"
+
+        "github.com/jackc/pgx/v5"
+)
+
+// StartTestServer the server used in tests
+func StartTestServer(
+        t *testing.T,
+        dbConn *pgx.Conn,
+        timeFunc func() time.Time,
+) *httptest.Server <span class="cov0" title="0">{
+
+        mux := server.InitServer(dbConn, timeFunc)
+        testServer := httptest.NewServer(mux)
+
+        t.Cleanup(
+                func() </span><span class="cov0" title="0">{
+                        testServer.Close()
+                }</span>,
+        )
+
+        <span class="cov0" title="0">return testServer</span>
+}
+</pre>
+		
+		<pre class="file" id="file8" style="display: none">package testutil
+
+import (
+        "log"
+        "time"
+)
+
+// TimeFuncForTest gives a fixed time for deterministic tests
+func TimeFuncForTest() time.Time <span class="cov0" title="0">{
+
+        timeFixed, err := time.Parse(time.RFC3339, "2025-05-10T09:50:50Z")
+        if err != nil </span><span class="cov0" title="0">{
+                log.Fatal(err)
+        }</span>
+        <span class="cov0" title="0">return timeFixed</span>
+}
+</pre>
+		
+		<pre class="file" id="file9" style="display: none">package user
+
+import (
+        "api_example/internal/apiutil"
+        "api_example/internal/database"
+        "context"
+        "encoding/json"
+        "errors"
+        "fmt"
+        "io"
+        "log"
+        "math/rand/v2"
+        "net/http"
+        "runtime"
+        "strings"
+        "time"
+
+        "net/mail"
+
+        "github.com/alexedwards/argon2id"
+        "github.com/google/uuid"
+        "github.com/jackc/pgx/v5"
+)
+
+//===============================================
+
+type PostUserBody struct {
+        Email    string `json:"email"`
+        Name     string `json:"name"`
+        Password string `json:"password"`
+}
+
+type PostUserResp struct {
+        PublicID uuid.UUID `json:"id"`
+        Email    string    `json:"email"`
+        Name     string    `json:"name"`
+}
+
+// UnmarshalPostUserBody Validate the input body
+func UnmarshalPostUserBody(r *http.Request) (PostUserBody, error) <span class="cov8" title="1">{
+
+        bodyBytes, err := io.ReadAll(r.Body)
+        defer r.Body.Close()
+
+        var newUser PostUserBody
+
+        err = json.Unmarshal(bodyBytes, &amp;newUser)
+        if err != nil </span><span class="cov0" title="0">{
+                return PostUserBody{}, err
+        }</span>
+
+        <span class="cov8" title="1">if len(newUser.Name) == 0 </span><span class="cov8" title="1">{
+                return PostUserBody{}, fmt.Errorf("name not provided")
+        }</span>
+
+        <span class="cov8" title="1">_, err = mail.ParseAddress(newUser.Email)
+        if err != nil </span><span class="cov8" title="1">{
+                return PostUserBody{}, err
+        }</span>
+
+        <span class="cov8" title="1">if len(newUser.Password) &lt; 12 </span><span class="cov8" title="1">{
+                return PostUserBody{}, fmt.Errorf("password must 12 or more characters long")
+        }</span>
+
+        <span class="cov8" title="1">if newUser.Password == strings.ToLower(newUser.Password) </span><span class="cov0" title="0">{
+                return PostUserBody{}, fmt.Errorf("password must have an upper case letter")
+        }</span>
+
+        <span class="cov8" title="1">return newUser, nil</span>
+}
+
+// PostUserAdd handles POST /user
+//
+// Dependency inject dbConn and timeFunc
+func PostUser(
+        dbConn *pgx.Conn,
+        timeFunc func() time.Time,
+) http.HandlerFunc <span class="cov8" title="1">{
+
+        return func(w http.ResponseWriter, r *http.Request) </span><span class="cov8" title="1">{
+
+                // Prevent timing attacks (to find if a user already exists) using a random sleep
+                defer func() </span><span class="cov8" title="1">{
+                        time.Sleep(time.Duration(rand.IntN(500)) * time.Millisecond)
+                }</span>()
+
+                <span class="cov8" title="1">newUser, err := UnmarshalPostUserBody(r)
+                if err != nil </span><span class="cov8" title="1">{
+                        w.WriteHeader(http.StatusBadRequest)
+                        fmt.Fprintf(w, `{"error": "%s"}`, err.Error())
+                        return
+                }</span>
+
+                // Side channel attack proof password hashing
+                <span class="cov8" title="1">passwordHashed, err := argon2id.CreateHash(
+                        newUser.Password,
+                        &amp;argon2id.Params{
+                                Memory:     128 * 1024,
+                                Iterations: 4,
+                                Parallelism: func() uint8 </span><span class="cov8" title="1">{
+                                        nCPU := runtime.NumCPU()
+                                        if nCPU &gt; 4 </span><span class="cov8" title="1">{
+                                                return uint8(runtime.NumCPU() / 4)
+                                        }</span> else<span class="cov0" title="0"> {
+                                                return 1
+                                        }</span>
+                                }(),
+                                SaltLength: 16,
+                                KeyLength:  64,
+                        },
+                )
+                <span class="cov8" title="1">if err != nil </span><span class="cov0" title="0">{
+                        // Not leaking internal error details to the client
+                        log.Printf("internal server error: %s\n", err.Error())
+                        w.WriteHeader(http.StatusInternalServerError)
+                        return
+                }</span>
+
+                // This query must complete within 10 seconds otherwise it will timeout
+                <span class="cov8" title="1">ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+                defer cancel()
+
+                userPublicID := uuid.New()
+
+                err = database.StartTransaction(dbConn, ctx, func(tx pgx.Tx) error </span><span class="cov8" title="1">{
+
+                        //================================
+                        // Check if the user already exists
+                        row := tx.QueryRow(
+                                ctx,
+                                `select
+                                        "user"."name",
+                                        "user"."email"
+                                from "user"
+                                where
+                                        "user"."name" = $1
+                                        and "user"."email" = $2;
+                                `,
+                                newUser.Name,
+                                newUser.Email,
+                        )
+
+                        var userName string
+                        var userEmail string
+
+                        err = row.Scan(
+                                &amp;userName,
+                                &amp;userEmail,
+                        )
+                        if err != nil </span><span class="cov8" title="1">{
+                                // Adding new users so we expect pgx.ErrNoRows here, only show other errors
+                                if !errors.Is(err, pgx.ErrNoRows) </span><span class="cov0" title="0">{
+                                        return err
+                                }</span>
+                        }
+
+                        // User already exists, nothing to do
+                        // Return http.StatusOK here because we do not want to leak who is and is not a user of the system already
+                        <span class="cov8" title="1">if err == nil </span><span class="cov8" title="1">{
+                                if userEmail != "" &amp;&amp; userName != "" </span><span class="cov8" title="1">{
+                                        log.Printf("attempted to insert duplicate user")
+                                        return nil
+                                }</span>
+                        }
+                        //================================
+
+                        <span class="cov8" title="1">res, err := tx.Exec(
+                                ctx,
+                                `insert into "user"(
+                                        "public_id", 
+                                        "name", 
+                                        "email",
+                                        "password_hashed",
+                                        "created_at"
+                                )
+                                values($1, $2, $3, $4, $5);
+                                `,
+                                userPublicID,
+                                newUser.Name,
+                                newUser.Email,
+                                passwordHashed,
+                                timeFunc(),
+                        )
+                        if err != nil </span><span class="cov0" title="0">{
+                                return err
+                        }</span>
+
+                        <span class="cov8" title="1">if res.RowsAffected() != 1 </span><span class="cov0" title="0">{
+                                return fmt.Errorf("inserting user failed")
+                        }</span>
+
+                        <span class="cov8" title="1">return nil</span>
+                })
+                <span class="cov8" title="1">if err != nil </span><span class="cov0" title="0">{
+                        // Not leaking internal error details to the client
+                        log.Printf("internal server error: %s\n", err.Error())
+                        w.WriteHeader(http.StatusInternalServerError)
+                        return
+                }</span>
+
+                <span class="cov8" title="1">response := PostUserResp{
+                        PublicID: userPublicID,
+                        Email:    newUser.Email,
+                        Name:     newUser.Name,
+                }
+
+                jsonResponse, err := json.MarshalIndent(response, "", "    ")
+                if err != nil </span><span class="cov0" title="0">{
+                        w.WriteHeader(http.StatusInternalServerError)
+                        log.Printf(`{"error": "%s"}`, err.Error())
+                        return
+                }</span>
+
+                <span class="cov8" title="1">w.Header().Set("Content-Type", "application/json")
+                w.Write(jsonResponse)</span>
+        }
+}
+
+//===============================================
+
+var PasswordNotMatchingHash = errors.New("password not matching hash")
+
+type PostLoginResponse struct {
+        CSRFToken string `json:"csrf_token"`
+}
+
+// PostLogin handles POST /login
+//
+// Dependency inject dbConn and timeFunc
+func PostLogin(
+        dbConn *pgx.Conn,
+        timeFunc func() time.Time,
+) http.HandlerFunc <span class="cov8" title="1">{
+
+        apiAddress, _ := apiutil.GetServerAddrPort()
+
+        return func(w http.ResponseWriter, r *http.Request) </span><span class="cov8" title="1">{
+
+                // Prevent timing attacks (to find if a user already exists) using a random sleep
+                defer func() </span><span class="cov8" title="1">{
+                        time.Sleep(time.Duration(rand.IntN(500)) * time.Millisecond)
+                }</span>()
+
+                <span class="cov8" title="1">userEmail, password, ok := r.BasicAuth()
+                if !ok </span><span class="cov0" title="0">{
+                        http.Error(w, `{"error": "email or password is incorrect"}`, http.StatusUnauthorized)
+                }</span>
+
+                // This query must complete within 10 seconds otherwise it will timeout
+                <span class="cov8" title="1">ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+                defer cancel()
+
+                var passwordHashed string
+                sessionPublicID := uuid.New()
+                csrfToken := uuid.New()
+
+                sessionDuration := time.Minute * 60 * 24
+                sessionExpirationTime := timeFunc().Add(sessionDuration)
+                var userID int
+                var numLoginAttempts int
+
+                err := database.StartTransaction(dbConn, ctx, func(tx pgx.Tx) error </span><span class="cov8" title="1">{
+
+                        //================================
+                        // Check if the user exists
+                        row := tx.QueryRow(
+                                ctx,
+                                `select
+                                        "user"."id",
+                                        "user"."password_hashed",
+                                        "user"."num_login_attempts"
+                                from "user"
+                                where
+                                         "user"."email" = $1
+                                        and "user"."num_login_attempts" &lt; 10;
+                                `,
+                                userEmail,
+                        )
+
+                        err := row.Scan(
+                                &amp;userID,
+                                &amp;passwordHashed,
+                                &amp;numLoginAttempts,
+                        )
+                        if err != nil </span><span class="cov8" title="1">{
+                                // if user is missing or session is invalid, will return pgx.ErrNoRows
+                                return err
+                        }</span>
+
+                        // Constant time password hash comparison, mitigates against timing attacks
+                        <span class="cov8" title="1">ok, err = argon2id.ComparePasswordAndHash(password, passwordHashed)
+                        if !ok || err != nil </span><span class="cov8" title="1">{
+                                return PasswordNotMatchingHash
+                        }</span>
+
+                        //================================
+                        // Add session
+
+                        <span class="cov8" title="1">res, err := tx.Exec(
+                                ctx,
+                                `insert into "session"(
+                                        "public_id",
+                                        "csrf_token",
+                                        "user_id",
+                                        "created_at",
+                                        "expires_at"
+                                )
+                                values ($1, $2, $3, $4, $5)
+                                `,
+                                sessionPublicID,
+                                csrfToken,
+                                userID,
+                                timeFunc(),
+                                sessionExpirationTime,
+                        )
+                        if err != nil </span><span class="cov0" title="0">{
+                                return err
+                        }</span>
+
+                        <span class="cov8" title="1">if res.RowsAffected() != 1 </span><span class="cov0" title="0">{
+                                return fmt.Errorf("updating user failed")
+                        }</span>
+
+                        // Reset user.num_login_attempts but only if have some failed attempts
+                        <span class="cov8" title="1">if numLoginAttempts &gt; 0 </span><span class="cov0" title="0">{
+
+                                res, err := dbConn.Exec(
+                                        ctx,
+                                        `update "user" 
+                                                set "num_login_attempts" = 0
+                                        where 
+                                                "user"."id" = $1
+                                        `,
+                                        userID,
+                                )
+                                if err != nil </span><span class="cov0" title="0">{
+                                        return err
+                                }</span>
+
+                                <span class="cov0" title="0">if res.RowsAffected() != 1 </span><span class="cov0" title="0">{
+                                        return errors.New("unable to update user")
+                                }</span>
+
+                        }
+
+                        <span class="cov8" title="1">return nil</span>
+
+                })
+                <span class="cov8" title="1">if err != nil </span><span class="cov8" title="1">{
+                        // User not found or incorrect password
+                        if errors.Is(err, pgx.ErrNoRows) </span><span class="cov8" title="1">{
+                                http.Error(w, `{"error": "email or password is incorrect"}`, http.StatusUnauthorized)
+                                return
+                        }</span>
+
+                        <span class="cov8" title="1">if errors.Is(err, PasswordNotMatchingHash) </span><span class="cov8" title="1">{
+
+                                //================================
+                                // User's login failed! Now increment login attempts
+                                // user cannot login once num_login_attempts reaches 10
+                                // We do this outside the original transaction so avoid rolling back the update
+
+                                res, err := dbConn.Exec(
+                                        ctx,
+                                        `update "user" 
+                                                set "num_login_attempts" = "num_login_attempts" + 1
+                                        where 
+                                                "user"."id" = $1
+                                        `,
+                                        userID,
+                                )
+                                if err != nil </span><span class="cov0" title="0">{
+                                        // Not leaking internal error details to the client
+                                        log.Printf("unable to update user\n")
+                                        w.WriteHeader(http.StatusInternalServerError)
+                                        return
+                                }</span>
+
+                                <span class="cov8" title="1">if res.RowsAffected() != 1 </span><span class="cov0" title="0">{
+                                        // Not leaking internal error details to the client
+                                        log.Printf("unable to update user\n")
+                                        w.WriteHeader(http.StatusInternalServerError)
+                                        return
+                                }</span>
+
+                                <span class="cov8" title="1">http.Error(w, `{"error": "email or password is incorrect"}`, http.StatusUnauthorized)
+                                return</span>
+                        }
+
+                        // Not leaking internal error details to the client
+                        <span class="cov0" title="0">log.Printf("internal server error: %s\n", err.Error())
+                        w.WriteHeader(http.StatusInternalServerError)
+                        return</span>
+                }
+
+                <span class="cov8" title="1">http.SetCookie(
+                        w,
+                        &amp;http.Cookie{
+                                Name:     "session",
+                                Value:    sessionPublicID.String(),
+                                Path:     "/",
+                                Domain:   apiAddress,
+                                Expires:  sessionExpirationTime,
+                                MaxAge:   int(sessionDuration.Seconds()),
+                                Secure:   true, // HTTPS only
+                                HttpOnly: true, // Inaccessible from JS
+                                // Do not send with cross site requests, but FE and BE must be on the same domain
+                                SameSite: http.SameSiteStrictMode,
+                        },
+                )
+
+                w.Header().Set("Content-Type", "application/json")
+
+                response := PostLoginResponse{CSRFToken: csrfToken.String()}
+                responseBytes, err := json.Marshal(response)
+                if err != nil </span><span class="cov0" title="0">{
+                        log.Printf("internal server error: %s\n", err.Error())
+                        w.WriteHeader(http.StatusInternalServerError)
+                        return
+                }</span>
+
+                <span class="cov8" title="1">w.Write(responseBytes)</span>
+        }
+}
+
+//===============================================
+
+type GetUserResp struct {
+        Name      string    `json:"name"`
+        Email     string    `json:"email"`
+        CreatedAt time.Time `json:"created_at"`
+}
+
+// GetUser handles GET /user for the requesting user only
+//
+// Dependency inject dbConn
+func GetUser(
+        dbConn *pgx.Conn,
+) http.HandlerFunc <span class="cov8" title="1">{
+
+        return func(w http.ResponseWriter, r *http.Request) </span><span class="cov8" title="1">{
+
+                userID, err := apiutil.GetUserIDFromReq(r)
+                if err != nil </span><span class="cov0" title="0">{
+                        w.WriteHeader(http.StatusInternalServerError)
+                        return
+                }</span>
+
+                // This query must complete within 10 seconds otherwise it will timeout
+                <span class="cov8" title="1">ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+                defer cancel()
+
+                var userName string
+                var userEmail string
+                var userCreatedAt time.Time
+
+                err = database.StartTransaction(dbConn, ctx, func(tx pgx.Tx) error </span><span class="cov8" title="1">{
+
+                        //================================
+                        // Check if the user exists
+                        row := tx.QueryRow(
+                                ctx,
+                                `select
+                                        "user"."name",
+                                        "user"."email",
+                                        "user"."created_at"
+                                from "user"
+                                where
+                                         "user"."id" = $1;
+                                `,
+                                userID,
+                        )
+
+                        err := row.Scan(
+                                &amp;userName,
+                                &amp;userEmail,
+                                &amp;userCreatedAt,
+                        )
+                        if err != nil </span><span class="cov0" title="0">{
+                                return err
+                        }</span>
+
+                        <span class="cov8" title="1">return nil</span>
+                })
+                <span class="cov8" title="1">if err != nil </span><span class="cov0" title="0">{
+                        // User not found or incorrect password
+                        if errors.Is(err, pgx.ErrNoRows) </span><span class="cov0" title="0">{
+                                http.Error(w, `{"error": "user not found"}`, http.StatusNotFound)
+                                return
+                        }</span>
+
+                        // Not leaking internal error details to the client
+                        <span class="cov0" title="0">log.Printf("internal server error: %s\n", err.Error())
+                        w.WriteHeader(http.StatusInternalServerError)
+                        return</span>
+                }
+
+                <span class="cov8" title="1">w.Header().Set("Content-Type", "application/json")
+
+                response := GetUserResp{
+                        Name:      userName,
+                        Email:     userEmail,
+                        CreatedAt: userCreatedAt,
+                }
+                responseBytes, err := json.Marshal(response)
+                if err != nil </span><span class="cov0" title="0">{
+                        log.Printf("internal server error: %s\n", err.Error())
+                        w.WriteHeader(http.StatusInternalServerError)
+                        return
+                }</span>
+
+                <span class="cov8" title="1">w.Write(responseBytes)</span>
+        }
+}
+</pre>
+		
+		<pre class="file" id="file10" style="display: none">package main
+
+import (
+        "api_example/internal/database"
+        "api_example/internal/server"
+)
+
+func main() <span class="cov0" title="0">{
+        dbConn := database.ConnectToDBWithEnvVars()
+        server.StartServer(dbConn)
+}</span>
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>
