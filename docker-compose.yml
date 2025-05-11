@@ -15,8 +15,6 @@ services:
       API_ADDR: api   
     ports:
       - "8080:8080"
-    # volumes:
-    #   - ./:/code/app
     depends_on:
       db:
         condition: service_healthy

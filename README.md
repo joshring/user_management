@@ -174,10 +174,17 @@ err := database.StartTransaction(dbConn, ctx, func(tx pgx.Tx) error {
 - To prevent cross-request database side effects on in progress requests, made heavy use of database transactions.
 - In the event of a panic or error the transaction is rolled back and no persistent changes are made to the database.
 
+### Testing and database
+- Database is initialised with `database/schema.sql`
+- At the start of each test we get a new database connection after we have truncated (cleaned out all the data) for each table, we do this to start from a clean slate each time and can add back the data we need for each test.
 
 
 
 ## Future work
+
+### Automate adding common test data
+- Currently build back all test data each test, some duplication is happening, could consolidate into functions to give a known starting state for tests, especially useful when many tests need the same starting data.
+- Could isolate databases/schemas for different tests then could run tests in parallel.
 
 ### Test with frontend
 - Cookies will need to be tweaked depending on the domains of the deployment, eg it needs to work across multiple domains
