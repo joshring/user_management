@@ -2,7 +2,6 @@ package user
 
 import (
 	"api_example/internal/apiutil"
-	"api_example/internal/database"
 	"context"
 	"encoding/json"
 	"errors"
@@ -100,7 +99,7 @@ func PostUser(
 				Parallelism: func() uint8 {
 					nCPU := runtime.NumCPU()
 					if nCPU > 4 {
-						return uint8(runtime.NumCPU() / 4)
+						return uint8(nCPU / 4)
 					} else {
 						return 1
 					}
@@ -122,75 +121,15 @@ func PostUser(
 
 		userPublicID := uuid.New()
 
-		err = database.StartTransaction(dbConn, ctx, func(tx pgx.Tx) error {
-
-			//================================
-			// Check if the user already exists
-			row := tx.QueryRow(
-				ctx,
-				`select
-					"user"."name",
-					"user"."email"
-				from "user"
-				where
-					"user"."name" = $1
-					and "user"."email" = $2;
-				`,
-				newUser.Name,
-				newUser.Email,
-			)
-
-			var userName string
-			var userEmail string
-
-			err = row.Scan(
-				&userName,
-				&userEmail,
-			)
-			if err != nil {
-				// Adding new users so we expect pgx.ErrNoRows here, only show other errors
-				if !errors.Is(err, pgx.ErrNoRows) {
-					return err
-				}
-			}
-
-			// User already exists, nothing to do
-			// Return http.StatusOK here because we do not want to leak who is and is not a user of the system already
-			if err == nil {
-				if userEmail != "" && userName != "" {
-					log.Printf("attempted to insert duplicate user")
-					return nil
-				}
-			}
-			//================================
-
-			res, err := tx.Exec(
-				ctx,
-				`insert into "user"(
-					"public_id", 
-					"name", 
-					"email",
-					"password_hashed",
-					"created_at"
-				)
-				values($1, $2, $3, $4, $5);
-				`,
-				userPublicID,
-				newUser.Name,
-				newUser.Email,
-				passwordHashed,
-				timeFunc(),
-			)
-			if err != nil {
-				return err
-			}
-
-			if res.RowsAffected() != 1 {
-				return fmt.Errorf("inserting user failed")
-			}
-
-			return nil
-		})
+		err = AddUserUsingDB(
+			dbConn,
+			ctx,
+			newUser.Name,
+			newUser.Email,
+			userPublicID,
+			passwordHashed,
+			timeFunc,
+		)
 		if err != nil {
 			// Not leaking internal error details to the client
 			log.Printf("internal server error: %s\n", err.Error())
@@ -244,108 +183,25 @@ func PostLogin(
 		userEmail, password, ok := r.BasicAuth()
 		if !ok {
 			http.Error(w, `{"error": "email or password is incorrect"}`, http.StatusUnauthorized)
+			return
 		}
 
 		// This query must complete within 10 seconds otherwise it will timeout
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 		defer cancel()
 
-		var passwordHashed string
-		sessionPublicID := uuid.New()
-		csrfToken := uuid.New()
-
 		sessionDuration := time.Minute * 60 * 24
 		sessionExpirationTime := timeFunc().Add(sessionDuration)
-		var userID int
-		var numLoginAttempts int
 
-		err := database.StartTransaction(dbConn, ctx, func(tx pgx.Tx) error {
-
-			//================================
-			// Check if the user exists
-			row := tx.QueryRow(
-				ctx,
-				`select
-					"user"."id",
-					"user"."password_hashed",
-					"user"."num_login_attempts"
-				from "user"
-				where
-				 	"user"."email" = $1
-					and "user"."num_login_attempts" < 10;
-				`,
-				userEmail,
-			)
-
-			err := row.Scan(
-				&userID,
-				&passwordHashed,
-				&numLoginAttempts,
-			)
-			if err != nil {
-				// if user is missing or session is invalid, will return pgx.ErrNoRows
-				return err
-			}
-
-			// Constant time password hash comparison, mitigates against timing attacks
-			ok, err = argon2id.ComparePasswordAndHash(password, passwordHashed)
-			if !ok || err != nil {
-				return PasswordNotMatchingHash
-			}
-
-			//================================
-			// Add session
-
-			res, err := tx.Exec(
-				ctx,
-				`insert into "session"(
-					"public_id",
-					"csrf_token",
-					"user_id",
-					"created_at",
-					"expires_at"
-				)
-				values ($1, $2, $3, $4, $5)
-				`,
-				sessionPublicID,
-				csrfToken,
-				userID,
-				timeFunc(),
-				sessionExpirationTime,
-			)
-			if err != nil {
-				return err
-			}
-
-			if res.RowsAffected() != 1 {
-				return fmt.Errorf("updating user failed")
-			}
-
-			// Reset user.num_login_attempts but only if have some failed attempts
-			if numLoginAttempts > 0 {
-
-				res, err := dbConn.Exec(
-					ctx,
-					`update "user" 
-						set "num_login_attempts" = 0
-					where 
-						"user"."id" = $1
-					`,
-					userID,
-				)
-				if err != nil {
-					return err
-				}
-
-				if res.RowsAffected() != 1 {
-					return errors.New("unable to update user")
-				}
-
-			}
-
-			return nil
-
-		})
+		userID, sessionPublicID, csrfToken, err := LoginUsingDB(
+			dbConn,
+			ctx,
+			userEmail,
+			password,
+			timeFunc,
+			sessionDuration,
+			sessionExpirationTime,
+		)
 		if err != nil {
 			// User not found or incorrect password
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -450,38 +306,11 @@ func GetUser(
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 		defer cancel()
 
-		var userName string
-		var userEmail string
-		var userCreatedAt time.Time
-
-		err = database.StartTransaction(dbConn, ctx, func(tx pgx.Tx) error {
-
-			//================================
-			// Check if the user exists
-			row := tx.QueryRow(
-				ctx,
-				`select
-					"user"."name",
-					"user"."email",
-					"user"."created_at"
-				from "user"
-				where
-				 	"user"."id" = $1;
-				`,
-				userID,
-			)
-
-			err := row.Scan(
-				&userName,
-				&userEmail,
-				&userCreatedAt,
-			)
-			if err != nil {
-				return err
-			}
-
-			return nil
-		})
+		userName, userEmail, userCreatedAt, err := GetUserUsingDB(
+			dbConn,
+			ctx,
+			userID,
+		)
 		if err != nil {
 			// User not found or incorrect password
 			if errors.Is(err, pgx.ErrNoRows) {
